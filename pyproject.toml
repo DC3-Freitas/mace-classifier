@@ -17,6 +17,7 @@ dependencies = [
 dev = [
     "ipykernel>=7.2.0",
     "ipython>=9.10.0",
+    "ipywidgets>=8.1.8",
     "mypy>=1.19.1",
     "pylint>=4.0.5",
     "pytest>=9.0.2",
@@ -36,3 +37,22 @@ no-build-package = ["torch-scatter", "torch-sparse", "torch-cluster", "torch-spl
 torch = { index = "pytorch-cu126" }
 torchvision = { index = "pytorch-cu126" }
 
+[tool.pyright]
+reportMissingModuleSource = false
+reportMissingTypeStubs = false
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.isort]
+known-first-party = ["mace_classifier"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
