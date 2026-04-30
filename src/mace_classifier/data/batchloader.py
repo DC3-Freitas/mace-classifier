@@ -16,6 +16,10 @@ from mace_classifier.data.augmentations import AugmentedStructure
 
 Z_TABLE = AtomicNumberTable([1, 2])
 
+# Outside the ranges of shuffle
+PURE_PERMUTATION = +1e9
+MONO_SPECIES_SHUFFLE = -1e9
+
 
 def make_atomic_data(
     augmented: AugmentedStructure,
@@ -57,7 +61,7 @@ class PrototypeDataset(Dataset):
         self,
         cif_dir,
         manifest,
-        sigma_levels,
+        sigma_levels,  # Alex: these thingsmust be unique
         shuffle_levels,
         d_nn_range,
         n_scales=5,
@@ -207,7 +211,7 @@ class PrototypeDataset(Dataset):
                     "bravais_label": parent_info["info"]["bravais_label"],
                     "ordering_type_label": parent_info["info"]["ordering_type_label"],
                     "sigma": 0.0,
-                    "shuffle_fraction": 1.0,
+                    "shuffle_fraction": PURE_PERMUTATION,  # Alex: special case
                     "family_id": parent_info["family_id"],
                 },
                 z_table=Z_TABLE,
@@ -227,7 +231,7 @@ class PrototypeDataset(Dataset):
                     "bravais_label": parent_info["info"]["bravais_label"],
                     "ordering_type_label": parent_info["info"]["ordering_type_label"],
                     "sigma": 0.0,
-                    "shuffle_fraction": -1.0,  # should monospecies be considered fully disordered?
+                    "shuffle_fraction": MONO_SPECIES_SHUFFLE,  # Alex: should not count
                     "family_id": parent_info["family_id"],
                 },
                 z_table=Z_TABLE,

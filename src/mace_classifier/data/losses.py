@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch_geometric
 
+from mace_classifier.data.batchloader import MONO_SPECIES_SHUFFLE, PURE_PERMUTATION
+
 
 def vicreg_variance_loss(z: torch.Tensor, gamma: float = 1, epsilon: float = 1e-4):
     # z = [batch_size, embed_dim]
@@ -42,6 +44,23 @@ def ranking_loss(
     return loss / len(node_pairs)
 
 
+# Alex: Combat collapse
+def chem_pair_repulsion(
+    z: torch.Tensor,
+    node_pairs: list[tuple[torch.Tensor, torch.Tensor]],
+    margin: float = 1.0,
+):
+    if len(node_pairs) == 0:
+        return torch.zeros((), device=z.device)
+
+    loss = 0.0
+    for nodes_a, nodes_b in node_pairs:
+        diff = (z[nodes_a] - z[nodes_b]).norm(dim=-1)
+        loss = loss + torch.relu(margin - diff).mean()
+
+    return loss / len(node_pairs)
+
+
 def compute_pair_indices(batch: torch_geometric.data.Batch):
     """
     From batch metadata, compute:
@@ -57,7 +76,7 @@ def compute_pair_indices(batch: torch_geometric.data.Batch):
           where p_a < p_b (same family, same geometry)
     """
 
-    # Make these node level
+    # Alex: made this node level and edited the corresponding things
     chem_pairs = []
     struct_pairs = []
     rank_S_pairs = []
@@ -76,17 +95,33 @@ def compute_pair_indices(batch: torch_geometric.data.Batch):
             i_nodes = (batch.batch == i).nonzero(as_tuple=True)[0]
             j_nodes = (batch.batch == j).nonzero(as_tuple=True)[0]
 
-            # Enforce family (major change I made ... please lemme know if I was not
-            # suppose to enforce this)
+            # Alex: Enforce family the same and bug fixes
             if same_family:
                 # Fixed structure
                 if same_struct and not same_chem:
                     chem_pairs.append((i_nodes, j_nodes))
 
-                    if batch.shuffle_fraction[i] > batch.shuffle_fraction[j]:
-                        rank_C_pairs.append((i_nodes, j_nodes))
-                    elif batch.shuffle_fraction[i] < batch.shuffle_fraction[j]:
-                        rank_C_pairs.append((j_nodes, i_nodes))
+                    # Alex: Don't rank monospecies or pure permutation since they introduce
+                    # corner cases
+                    if batch.shuffle_fraction[i] not in [
+                        MONO_SPECIES_SHUFFLE,
+                        PURE_PERMUTATION,
+                    ] and batch.shuffle_fraction[j] not in [
+                        MONO_SPECIES_SHUFFLE,
+                        PURE_PERMUTATION,
+                    ]:
+                        # Alex: Symmetrize since for example 0 and 1 should mean the same
+                        true_shuffle_frac_i = min(
+                            batch.shuffle_fraction[i], 1 - batch.shuffle_fraction[i]
+                        )
+                        true_shuffle_frac_j = min(
+                            batch.shuffle_fraction[j], 1 - batch.shuffle_fraction[j]
+                        )
+
+                        if true_shuffle_frac_i > true_shuffle_frac_j:
+                            rank_C_pairs.append((i_nodes, j_nodes))
+                        elif true_shuffle_frac_i < true_shuffle_frac_j:
+                            rank_C_pairs.append((j_nodes, i_nodes))
 
                 # Fixed chem perturbation
                 if same_chem and not same_struct:
@@ -149,6 +184,7 @@ class TotalLoss(nn.Module):
         lambda_var: float = 25.0,
         lambda_cov: float = 1.0,
         lambda_rank: float = 10.0,
+        lambda_rep_C: float = 10.0,
         lambda_cls_S: float = 1.0,
         rank_margin: float = 0.1,
         vicreg_gamma: float = 1.0,
@@ -158,6 +194,7 @@ class TotalLoss(nn.Module):
         self.lambda_inv = lambda_inv
         self.lambda_var = lambda_var
         self.lambda_cov = lambda_cov
+        self.lambda_rep_C = lambda_rep_C
         self.lambda_rank = lambda_rank
         self.lambda_cls_S = lambda_cls_S
         self.rank_margin = rank_margin
@@ -168,6 +205,7 @@ class TotalLoss(nn.Module):
             "var_C": lambda_var,
             "cov_S": lambda_cov,
             "cov_C": lambda_cov,
+            "rep_C": lambda_rep_C,
             "rank_S": lambda_rank,
             "rank_C": lambda_rank,
             "cls_S": lambda_cls_S,
@@ -194,6 +232,9 @@ class TotalLoss(nn.Module):
             "var_C": vicreg_variance_loss(outputs["z_C"]),
             "cov_S": vicreg_covariance_loss(outputs["z_S"]),
             "cov_C": vicreg_covariance_loss(outputs["z_C"]),
+            "rep_C": chem_pair_repulsion(
+                outputs["z_C"], pairs["chem_pairs"]
+            ),  # Alex: combat chemical collapse
             "rank_S": ranking_loss(outputs["s_hat"], pairs["rank_S_pairs"]),
             "rank_C": ranking_loss(outputs["c_hat"], pairs["rank_C_pairs"]),
             "inv_S": batch_invariance_loss(outputs["z_S"], pairs["chem_pairs"]),
